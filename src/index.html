@@ -261,6 +261,11 @@
   </div>
 
   <div class="context-menu" id="contextMenu" role="menu" hidden>
+    <div class="context-menu-spell" id="contextMenuSpell" hidden>
+      <div class="context-menu-suggestions" id="contextMenuSuggestions"></div>
+      <div class="context-menu-separator" role="separator"></div>
+      <button type="button" role="menuitem" data-action="add-to-dict">Add to dictionary</button>
+    </div>
     <button type="button" role="menuitem" data-action="link">Link selection to file…</button>
     <button type="button" role="menuitem" data-action="remove">Remove link</button>
   </div>
@@ -279,6 +284,8 @@
     </div>
   </div>
 
+  <script src="words.js"></script>
+  <script src="freq.js"></script>
   <script src="spellcheck.js"></script>
   <script src="markdown.js"></script>
   <script src="draw.js"></script>

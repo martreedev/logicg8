@@ -1,6 +1,8 @@
 (() => {
   'use strict';
 
+  // Common-typo autocorrections. Kept separate from the dictionary: these are
+  // the quick fixes applied as you type (see renderer.applyAutocorrect).
   const AUTOCORRECT = {
     teh: 'the',
     hte: 'the',
@@ -124,14 +126,112 @@
     unfortuneately: 'unfortunately'
   };
 
-  const WORDS = `
-  a about above across after again against all almost alone along already also although always among an and another any anybody anyone anything anywhere are area around as ask at away back be because become becomes been before begin behind being below beneath beside best better between beyond both but by can cannot could did do does doing done down during each early either else end enough even ever every everybody everyone everything face far few first for from front full further get give go goes going good great had has have he her here herself high him himself his how however i if in inside instead into is it its itself just keep kind know last late later least less let like little long made make man many may me might more most much must my myself name never new next no nobody none nor not nothing now nowhere of off often on once one only onto or other others our ours out over own part people perhaps place possible put rather right same say see seem several she should show since so some somebody someone something sometime sometimes somewhere still such take than that the their theirs them themselves then there therefore these they thing things this those though through time to together too toward two under until up upon us use very want was way we well were what whatever when where whether which while who whoever whom whose why will with within without would yes yet you your yours yourself yourselves
-  able accept according account across act action activity actually add admit agree allow amount answer appear apply argument arrive article art ask attention author available avoid bad base basic believe body book box bring build business call care case cause center certain change character check child choose church city class clear close color come common community company complete concern condition consider contain continue control cost country course cover create culture cut dark day dead deal decide decision deep degree describe design detail determine develop difference different difficult dinner direction discover doctor door draw drive drop drug during easy eat economic economy education effect effort eight employee energy enjoy enough enter entire especially establish event ever every evidence exactly example experience explain eye face fact factor fall family fast father fear federal feel feeling few field fight figure fill film final finally financial find fine finger finish fire firm first fish five floor fly focus follow food foot for force foreign forget form former forward four free friend from full function fund future game garden general girl give glass go goal good government green ground group grow growth guess gun guy hair half hand hang happen happy hard have head hear heart heat heavy help her here high history hit hold home hope hospital hot hotel hour house however huge human hundred husband idea identify if image imagine impact important improve in include including increase indeed indicate individual industry information inside instead institution interest interesting international interview into investment involve issue item its job join just keep key kid kind kitchen know knowledge land language large last late later laugh law lay lead learn leave left leg legal less let letter level lie life light like likely line list listen little live local long look lose loss lot love low main major make manage management many market marriage material matter maybe mean measure media medical meet member memory mention message method middle might military million mind minute miss mission model modern moment money month more morning most mother mouth move movement movie much music must name nation natural nature near nearly necessary need network never new news newspaper nice night nine no none nor north not note nothing notice now number occur of off offer office officer official often oh oil ok old on once one only onto open operation opportunity option or order organization other others our out outside over own page pain paint paper parent part particular particularly party pass past patient pattern pay peace people per perform performance perhaps period person personal phone physical pick picture piece place plan plant play player point police policy political politics poor popular population position positive possible power practice prepare present president pressure pretty prevent price private probably problem process produce product production professional program project property protect prove provide public pull purpose push put quality question quickly quite race radio raise range rate rather reach read ready real reality realize really reason receive recent recently recognize record red reduce reflect region relate relationship religious remain remember remove report represent require research resource respond response rest result return reveal rich right rise road rock role room rule run safe same save say scene school science scientist score sea season seat second section security see seek seem sell send senior sense series serious serve service set seven several shake share she shoot short shot should shoulder show side sign significant similar simple simply since sing single sister sit site situation six size skill skin small smile so social society soldier some somebody someone something sometimes son song soon sort sound source south southern space speak special specific speech spend sport spring staff stage stand standard star start state statement station stay step still stock stop store story strategy street strong structure student study stuff style subject success successful such suddenly suffer suggest summer support sure surface system table take talk task tax teach teacher team technology television tell ten tend term test than thank that the theater their them themselves then theory there these they thing think third this those though thought thousand threat three through throughout throw thus time to today together tonight too top total touch tough toward town trade traditional training travel treat treatment tree trial trip trouble true truth try turn two type under understand unit until up upon us use usually value various very victim view violence visit voice vote wait walk wall want war watch water way we weapon wear week weight well west western what whatever when where whether which while white who whole whom whose why wide wife will win wind window wish with within without woman wonder word work worker world worry would write writer wrong yard yeah year yes yet you young your yourself
-  logic syllogism quantifier quantifiers universal existential negation conjunction disjunction implication conditional biconditional equivalence necessity possibility modal premise premises conclusion argument valid invalid validity entailment entails contradiction tautology predicate domain set subset element membership inference derivation proof theorem axiom lemma corollary proposition connective connectives operator variable predicate symbol notation formula formulas entail entails models proves derives therefore thus hence henceforth antecedent consequent contrapositive converse inverse truth falsity semantics syntax formal informal soundness completeness consistent inconsistency paradoxical paradox
-  mortal men women child children human humans being beings thing things all every some exists existing exist necessarily possibly necessarily possible impossible necessarily mortal finite infinite
-  `;
+  // The full English dictionary (~275k words) is injected by words.js as a
+  // newline-separated string of lowercase alphabetic words.
+  const dictionary = new Set(
+    (window.__WORDS__ || '').split('\n').filter(Boolean)
+  );
 
-  const dictionary = new Set(WORDS.toLowerCase().split(/\s+/).filter(Boolean));
+  // How common each word is (lower = more common), injected by freq.js. Used
+  // to order suggestions so the most likely correction comes first.
+  const freqRank = new Map();
+  const freqWords = (window.__FREQ__ || '').split('\n').filter(Boolean);
+  for (let i = 0; i < freqWords.length; i += 1) {
+    freqRank.set(freqWords[i], i);
+  }
 
-  window.__SPELLCHECK__ = { dictionary, autocorrect: AUTOCORRECT };
+  const ALPHABET = 'abcdefghijklmnopqrstuvwxyz';
+
+  // All words within one edit (deletion, transposition, replacement, or
+  // insertion) of `word`. Returns a Set of lowercase strings.
+  function edits1(word) {
+    const result = new Set();
+    for (let i = 0; i <= word.length; i += 1) {
+      const left = word.slice(0, i);
+      const right = word.slice(i);
+
+      if (right) {
+        result.add(left + right.slice(1));                       // deletion
+      }
+      if (right.length > 1) {
+        result.add(left + right[1] + right[0] + right.slice(2)); // transposition
+      }
+      for (let j = 0; j < ALPHABET.length; j += 1) {
+        const c = ALPHABET[j];
+        result.add(left + c + right);                            // insertion
+        if (right) {
+          result.add(left + c + right.slice(1));                 // replacement
+        }
+      }
+    }
+    return result;
+  }
+
+  // Suggest up to `limit` correct spellings for a misspelled word, ranked so
+  // the most likely correction comes first (fewer edits, then same first
+  // letter, then alphabetically). Fast enough to run on every right-click.
+  function suggest(word) {
+    const lower = String(word || '').toLowerCase();
+    if (lower.length < 2) {
+      return [];
+    }
+
+    const found = [];
+    const seen = new Set();
+
+    const consider = (candidate, distance) => {
+      if (!dictionary.has(candidate) || seen.has(candidate)) {
+        return;
+      }
+      seen.add(candidate);
+      found.push({ word: candidate, distance });
+    };
+
+    // Edit distance 1 catches the vast majority of typos.
+    const oneAway = edits1(lower);
+    for (const candidate of oneAway) {
+      consider(candidate, 1);
+    }
+
+    // Only reach for edit distance 2 when there's nothing closer, and bound
+    // the work so a long misspelling can never stall the UI.
+    if (found.length === 0 && lower.length <= 12) {
+      let checked = 0;
+      outer: for (const c1 of oneAway) {
+        for (const c2 of edits1(c1)) {
+          checked += 1;
+          if (checked > 50000) {
+            break outer;
+          }
+          consider(c2, 2);
+        }
+      }
+    }
+
+    found.sort((a, b) => {
+      if (a.distance !== b.distance) {
+        return a.distance - b.distance;
+      }
+      const aRank = freqRank.has(a.word) ? freqRank.get(a.word) : Number.MAX_SAFE_INTEGER;
+      const bRank = freqRank.has(b.word) ? freqRank.get(b.word) : Number.MAX_SAFE_INTEGER;
+      if (aRank !== bRank) {
+        return aRank - bRank;
+      }
+      const aHead = a.word[0] === lower[0] ? 0 : 1;
+      const bHead = b.word[0] === lower[0] ? 0 : 1;
+      if (aHead !== bHead) {
+        return aHead - bHead;
+      }
+      const aLen = Math.abs(a.word.length - lower.length);
+      const bLen = Math.abs(b.word.length - lower.length);
+      if (aLen !== bLen) {
+        return aLen - bLen;
+      }
+      return a.word.localeCompare(b.word);
+    });
+
+    return found.slice(0, 5).map((item) => item.word);
+  }
+
+  window.__SPELLCHECK__ = { dictionary, autocorrect: AUTOCORRECT, suggest };
 })();

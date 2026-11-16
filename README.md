@@ -19,8 +19,9 @@ diagram, and link notes together. LogicG8 is a desktop app built with Electron.
   Ctrl-click to follow it, with a back button.
 - **Tabs** — keep many files open at once.
 - **Sub/superscript** — step down or up a baseline as you type.
-- **Spell-check with autocorrect** — a built-in dictionary that also lets you
-  keep your own words.
+- **Spell-check** — a built-in ~275,000-word dictionary underlines misspelled
+  words with a red squiggle; right-click a word for suggestions or to add it
+  to your own dictionary.
 - **Font controls** — family, weight, size, line height and letter spacing.
 
 ## Installation
@@ -115,6 +116,19 @@ Click **Draw mode** in the toolbar. Use the pencil, line and text tools
 - **Shift + ArrowDown** — step to subscript; type normally to write subscripts.
 - **Shift + ArrowUp** — step to superscript.
 - Step back to the normal baseline with the opposite arrow.
+
+### Spell checking
+
+Misspelled words are underlined with a red squiggle as you type.
+
+- **Right-click** a squiggled word to see up to five suggested corrections;
+  click one to replace the word.
+- Choose **Add to dictionary** to stop flagging a word (for example a name or
+  a logic term). Your added words are remembered and kept separate from the
+  built-in dictionary.
+
+Single letters (logic variables like `P`, `Q`, `x`) are never flagged, and
+logic keywords (such as `forall` or `implies`) are treated as correct.
 
 ## Keyboard shortcuts
 

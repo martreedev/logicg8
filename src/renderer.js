@@ -219,6 +219,7 @@
   const SETTINGS_KEY = 'mardraw.settings.v1';
   const LINKS_KEY = 'mardraw.links.v1';
   const USER_DICT_KEY = 'mardraw.userdict.v1';
+  let userDictCache = null;
   const app = document.querySelector('.app');
   const editor = document.getElementById('editor');
   const editorFrame = document.getElementById('editorFrame');
@@ -342,6 +343,8 @@
   const spellData = window.__SPELLCHECK__ || {};
   const spellDictionary = spellData.dictionary instanceof Set ? spellData.dictionary : new Set();
   const autocorrectMap = spellData.autocorrect && typeof spellData.autocorrect === 'object' ? spellData.autocorrect : {};
+  // A "word" for spell-check purposes: letters with internal apostrophes.
+  const SPELL_WORD_RE = /[A-Za-z]+(?:['’][A-Za-z]+)*/g;
 
   const sortedKeywords = [...keywordMap.keys()].sort((a, b) => b.length - a.length);
   const KEYWORD_REGEX = new RegExp(`\\b(?:${sortedKeywords.map(keywordPattern).join('|')})\\b`, 'gi');
@@ -749,6 +752,39 @@
     }
   }
 
+  function appendSpellCheckedText(fragment, text, linkId, offset) {
+    const baseOffset = offset || 0;
+    let lastIndex = 0;
+    for (const match of text.matchAll(SPELL_WORD_RE)) {
+      if (match.index > lastIndex) {
+        appendTextNode(fragment, text.slice(lastIndex, match.index), linkId);
+      }
+      const word = match[0];
+      const start = baseOffset + match.index;
+      const end = start + word.length;
+      // Don't underline the word the cursor is still on: it stays clean while
+      // you're typing it and only gets flagged once the cursor moves past it.
+      const caret = editor.selectionStart;
+      const onCurrentWord = caret >= start && caret <= end;
+      if (isWordCorrect(word) || onCurrentWord) {
+        appendTextNode(fragment, word, linkId);
+      } else {
+        const span = document.createElement('span');
+        span.className = `misspelled${linkId ? ' logic-link' : ''}`;
+        if (linkId) {
+          span.dataset.linkId = linkId;
+        }
+        span.dataset.offset = String(start);
+        span.textContent = word;
+        fragment.append(span);
+      }
+      lastIndex = match.index + word.length;
+    }
+    if (lastIndex < text.length) {
+      appendTextNode(fragment, text.slice(lastIndex), linkId);
+    }
+  }
+
   function scriptOffsetPx(level) {
     const fs = settings.fontSize;
     return level < 0 ? Math.abs(level) * 0.22 * fs : -level * 0.33 * fs;
@@ -766,13 +802,15 @@
     fragment.append(span);
   }
 
-  function appendScriptedText(fragment, text, linkId) {
+  function appendScriptedText(fragment, text, linkId, offset) {
+    const baseOffset = offset || 0;
     let plain = '';
+    let plainStart = 0;
     let index = 0;
 
     const flushPlain = () => {
       if (plain) {
-        appendTextNode(fragment, plain, linkId);
+        appendSpellCheckedText(fragment, plain, linkId, baseOffset + plainStart);
         plain = '';
       }
     };
@@ -792,6 +830,9 @@
           index += 1;
         }
       } else {
+        if (plain === '') {
+          plainStart = index;
+        }
         plain += char;
         index += 1;
       }
@@ -802,19 +843,19 @@
 
   function appendPlainText(fragment, text, offset, suggestion, linkId) {
     if (!suggestion || suggestion.end < offset || suggestion.end > offset + text.length) {
-      appendScriptedText(fragment, text, linkId);
+      appendScriptedText(fragment, text, linkId, offset);
       return;
     }
 
     const localIndex = suggestion.end - offset;
     if (localIndex > 0) {
-      appendScriptedText(fragment, text.slice(0, localIndex), linkId);
+      appendScriptedText(fragment, text.slice(0, localIndex), linkId, offset);
     }
 
     appendGhost(fragment, suggestion);
 
     if (localIndex < text.length) {
-      appendScriptedText(fragment, text.slice(localIndex), linkId);
+      appendScriptedText(fragment, text.slice(localIndex), linkId, offset + localIndex);
     }
   }
 
@@ -2170,12 +2211,16 @@
   }
 
   function loadUserDict() {
-    try {
-      const parsed = JSON.parse(localStorage.getItem(USER_DICT_KEY) || '[]');
-      return Array.isArray(parsed) ? parsed.map((word) => word.toLowerCase()) : [];
-    } catch {
-      return [];
+    if (userDictCache === null) {
+      let parsed = [];
+      try {
+        parsed = JSON.parse(localStorage.getItem(USER_DICT_KEY) || '[]');
+      } catch {
+        parsed = [];
+      }
+      userDictCache = Array.isArray(parsed) ? parsed.map((word) => word.toLowerCase()) : [];
     }
+    return userDictCache;
   }
 
   function addToUserDict(word) {
@@ -2183,6 +2228,7 @@
     const words = loadUserDict();
     if (!words.includes(lower)) {
       words.push(lower);
+      userDictCache = words;
       try {
         localStorage.setItem(USER_DICT_KEY, JSON.stringify(words));
       } catch {
@@ -2193,62 +2239,29 @@
 
   function isWordCorrect(word) {
     const lower = word.toLowerCase();
+    // Single letters (logic variables like P, Q, x) are never misspelled.
+    if (lower.length < 2) {
+      return true;
+    }
     if (spellDictionary.has(lower) || keywordWordSet.has(lower) || ignoredWords.has(lower)) {
       return true;
+    }
+    // Contractions and possessives ("don't", "Socrates's") aren't in the
+    // alphabetic dictionary; accept them when every part is a known word.
+    if (lower.includes("'") || lower.includes('’')) {
+      const parts = lower.split(/['’]/).filter(Boolean);
+      if (parts.length > 0 && parts.every((part) => part.length < 2 || spellDictionary.has(part))) {
+        return true;
+      }
     }
     return loadUserDict().includes(lower);
   }
 
-  function levenshtein(a, b) {
-    const m = a.length;
-    const n = b.length;
-    if (m === 0) {
-      return n;
-    }
-    if (n === 0) {
-      return m;
-    }
-    let previous = new Array(n + 1);
-    let current = new Array(n + 1);
-    for (let j = 0; j <= n; j += 1) {
-      previous[j] = j;
-    }
-    for (let i = 1; i <= m; i += 1) {
-      current[0] = i;
-      for (let j = 1; j <= n; j += 1) {
-        const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-        current[j] = Math.min(current[j - 1] + 1, previous[j] + 1, previous[j - 1] + cost);
-      }
-      const swap = previous;
-      previous = current;
-      current = swap;
-    }
-    return previous[n];
-  }
-
   function suggestWords(word) {
-    const lower = word.toLowerCase();
-    if (lower.length < 3) {
-      return [];
+    if (typeof spellData.suggest === 'function') {
+      return spellData.suggest(word);
     }
-    const candidates = [];
-    for (const candidate of spellDictionary) {
-      if (Math.abs(candidate.length - lower.length) > 2) {
-        continue;
-      }
-      const distance = levenshtein(lower, candidate);
-      if (distance <= 2) {
-        candidates.push({ candidate, distance });
-      }
-    }
-    for (const candidate of loadUserDict()) {
-      const distance = levenshtein(lower, candidate);
-      if (distance <= 2) {
-        candidates.push({ candidate, distance });
-      }
-    }
-    candidates.sort((x, y) => x.distance - y.distance || x.candidate.localeCompare(y.candidate));
-    return candidates.slice(0, 5).map((item) => item.candidate);
+    return [];
   }
 
   function misspelledElementAtPoint(x, y) {
@@ -3627,10 +3640,41 @@
     contextMenuState = null;
   }
 
-  function showContextMenu(x, y, link) {
+  function showContextMenu(x, y, link, spell) {
+    const spellSection = contextMenu.querySelector('.context-menu-spell');
+    const suggestionsEl = contextMenu.querySelector('#contextMenuSuggestions');
+    const linkItem = contextMenu.querySelector('[data-action="link"]');
     const removeItem = contextMenu.querySelector('[data-action="remove"]');
-    removeItem.hidden = !link;
-    contextMenuState = { link };
+
+    if (spell) {
+      const suggestions = suggestWords(spell.word);
+      const frag = document.createDocumentFragment();
+      for (const suggestion of suggestions) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.setAttribute('role', 'menuitem');
+        button.dataset.action = 'replace';
+        button.dataset.word = suggestion;
+        button.textContent = suggestion;
+        frag.append(button);
+      }
+      if (suggestions.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'context-menu-empty';
+        empty.textContent = 'No suggestions';
+        frag.append(empty);
+      }
+      suggestionsEl.replaceChildren(frag);
+      spellSection.hidden = false;
+      linkItem.hidden = true;
+      removeItem.hidden = true;
+    } else {
+      spellSection.hidden = true;
+      linkItem.hidden = false;
+      removeItem.hidden = !link;
+    }
+
+    contextMenuState = { link, spell: spell || null };
     contextMenu.hidden = false;
     contextMenu.style.left = '0px';
     contextMenu.style.top = '0px';
@@ -3651,19 +3695,33 @@
 
   editor.addEventListener('contextmenu', (event) => {
     event.preventDefault();
+    const misspelled = misspelledElementAtPoint(event.clientX, event.clientY);
+    if (misspelled) {
+      const start = Number(misspelled.dataset.offset || 0);
+      const word = misspelled.textContent;
+      showContextMenu(event.clientX, event.clientY, null, { start, end: start + word.length, word });
+      return;
+    }
     const linkElement = linkElementAtPoint(event.clientX, event.clientY);
     const link = linkElement ? findLinkById(linkElement.dataset.linkId) : null;
-    showContextMenu(event.clientX, event.clientY, link);
+    showContextMenu(event.clientX, event.clientY, link, null);
   });
 
   contextMenu.addEventListener('click', (event) => {
-    const action = event.target.closest('[data-action]')?.getAttribute('data-action');
-    const linkToRemove = contextMenuState && contextMenuState.link;
+    const target = event.target.closest('[data-action]');
+    const action = target ? target.getAttribute('data-action') : null;
+    const replacement = target ? target.dataset.word : null;
+    const state = contextMenuState;
     hideContextMenu();
-    if (action === 'link') {
+    if (action === 'replace' && state && state.spell) {
+      replaceRange(state.spell.start, state.spell.end, replacement);
+    } else if (action === 'add-to-dict' && state && state.spell) {
+      addToUserDict(state.spell.word);
+      refreshAll();
+    } else if (action === 'link') {
       createLinkAtSelection();
-    } else if (action === 'remove' && linkToRemove) {
-      removeLink(linkToRemove.id);
+    } else if (action === 'remove' && state && state.link) {
+      removeLink(state.link.id);
     }
   });
 
