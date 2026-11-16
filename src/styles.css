@@ -567,6 +567,10 @@ button {
   text-underline-offset: 3px;
 }
 
+.misspelled.misspelled-pending:not(.logic-link) {
+  text-decoration: none;
+}
+
 .modal-square {
   display: inline-block;
   width: 1ch;

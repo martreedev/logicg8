@@ -778,13 +778,15 @@
       const end = start + word.length;
       // Don't underline the word the cursor is still on: it stays clean while
       // you're typing it and only gets flagged once the cursor moves past it.
+      // It still gets a span (just without the squiggle) so right-clicking it
+      // finds the word even after the click has moved the caret into it.
       const caret = editor.selectionStart;
       const onCurrentWord = caret >= start && caret <= end;
-      if (isWordCorrect(word) || onCurrentWord) {
+      if (isWordCorrect(word)) {
         appendTextNode(fragment, word, linkId);
       } else {
         const span = document.createElement('span');
-        span.className = `misspelled${linkId ? ' logic-link' : ''}`;
+        span.className = `misspelled${onCurrentWord ? ' misspelled-pending' : ''}${linkId ? ' logic-link' : ''}`;
         if (linkId) {
           span.dataset.linkId = linkId;
         }
@@ -2274,11 +2276,24 @@
     return loadUserDict().includes(lower);
   }
 
-  function suggestWords(word) {
-    if (typeof spellData.suggest === 'function') {
-      return spellData.suggest(word);
+  // Carry the typed word's capitalization over to its correction
+  // ("Teh" -> "The", "TEH" -> "THE").
+  function matchCase(source, correction) {
+    if (source.length > 1 && source === source.toUpperCase()) {
+      return correction.toUpperCase();
     }
-    return [];
+    if (source[0] === source[0].toUpperCase() && source[0] !== source[0].toLowerCase()) {
+      return correction.charAt(0).toUpperCase() + correction.slice(1);
+    }
+    return correction;
+  }
+
+  function suggestWords(word) {
+    const suggestions = typeof spellData.suggest === 'function' ? spellData.suggest(word) : [];
+    // A known common-typo fix is almost always what was meant, so lead with it.
+    const known = autocorrectMap[word.toLowerCase()];
+    const ordered = known ? [known, ...suggestions.filter((item) => item !== known)] : suggestions;
+    return ordered.map((item) => matchCase(word, item));
   }
 
   function misspelledElementAtPoint(x, y) {
@@ -2314,11 +2329,7 @@
       return;
     }
 
-    const replacement = word === word.toUpperCase()
-      ? correction.toUpperCase()
-      : word[0] === word[0].toUpperCase() && word[0] !== word[0].toLowerCase()
-        ? correction.charAt(0).toUpperCase() + correction.slice(1)
-        : correction;
+    const replacement = matchCase(word, correction);
 
     autocorrecting = true;
     const start = caret - word.length;
