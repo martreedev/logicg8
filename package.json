@@ -1,0 +1,54 @@
+{
+  "name": "LogicG8",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A dark, fast notepad for symbolic logic.",
+  "author": "LogicG8",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "smoke": "electron scripts/smoke.js",
+    "smoke:draw": "electron scripts/draw-check.js",
+    "pack": "electron-builder --win --dir",
+    "dist": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^45.3.0",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "com.logicg8.app",
+    "productName": "LogicG8",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "include": "scripts/installer.nsh",
+      "artifactName": "LogicG8-Setup-${version}.${ext}",
+      "shortcutName": "LogicG8",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "fileAssociations": [
+      {
+        "ext": "logic",
+        "name": "LogicG8.logic",
+        "description": "Logic File"
+      }
+    ]
+  }
+}
