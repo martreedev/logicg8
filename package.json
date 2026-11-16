@@ -9,6 +9,7 @@
     "start": "electron .",
     "smoke": "electron scripts/smoke.js",
     "smoke:draw": "electron scripts/draw-check.js",
+    "check:formalize": "node scripts/formalize-check.js",
     "pack": "electron-builder --win --dir",
     "dist": "electron-builder --win"
   },

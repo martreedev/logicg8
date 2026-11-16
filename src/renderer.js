@@ -219,6 +219,8 @@
   const SETTINGS_KEY = 'mardraw.settings.v1';
   const LINKS_KEY = 'mardraw.links.v1';
   const USER_DICT_KEY = 'mardraw.userdict.v1';
+  const VARS_KEY = 'mardraw.vars.v1';
+  const VAR_COLORS = 6;
   let userDictCache = null;
   const app = document.querySelector('.app');
   const editor = document.getElementById('editor');
@@ -290,6 +292,13 @@
   const findNextButton = document.getElementById('findNext');
   const findCaseButton = document.getElementById('findCase');
   const findCloseButton = document.getElementById('findClose');
+  const formalTrigger = document.getElementById('formalTrigger');
+  const formalClose = document.getElementById('formalClose');
+  const formalBody = document.getElementById('formalBody');
+  const assignPopover = document.getElementById('assignPopover');
+  const assignPhrase = document.getElementById('assignPhrase');
+  const assignInput = document.getElementById('assignInput');
+  const assignChips = document.getElementById('assignChips');
 
   let openPopover = null;
   let toastTimer = 0;
@@ -305,6 +314,11 @@
   let activeTabIndex = 0;
   let tabIdCounter = 0;
   let currentLinkSpans = [];
+  let varEntries = loadVars();
+  let currentVarSpans = [];
+  let currentVarRanges = [];
+  let formalOpen = false;
+  let pendingAssign = null;
   let contextMenuState = null;
   let autocorrecting = false;
   let ctrlHeld = false;
@@ -929,6 +943,7 @@
     }
 
     currentLinkSpans = currentFilePath ? computeLinkSpans(currentFilePath, text) : [];
+    currentVarSpans = computeVarSpans(text);
 
     const events = [];
     for (const keyword of keywordItems) {
@@ -1004,6 +1019,8 @@
 
     highlightContent.replaceChildren(fragment);
     placeCaret();
+    paintVarHighlights();
+    renderFormalPanel();
     refreshFindForView();
   }
 
@@ -2322,6 +2339,11 @@
 
     editor.style.cursor = '';
     const symbolElement = symbolElementAtPoint(clientX, clientY);
+    const varSpan = symbolElement ? null : varSpanAtPoint(clientX, clientY);
+    if (varSpan) {
+      showVarTooltip(varSpan, clientX, clientY);
+      return;
+    }
     if (!symbolElement) {
       hideSymbolTooltip();
       return;
@@ -3090,6 +3112,7 @@
 
       const tab = activeTab();
       const nowMarkdown = isMarkdownPath(result.path);
+      moveVarsToPath(varSource(tab), result.path, Boolean(tab.path));
       tab.path = result.path;
       currentFilePath = result.path;
 
@@ -3229,6 +3252,404 @@
     saveLinks(links);
     renderHighlights();
     showToast('Link removed', 1000);
+  }
+
+  // ---- Variables / Formalize ---------------------------------------------
+  //
+  // A selected phrase can be assigned to a propositional variable (P) or to
+  // its negation (¬P). Assignments are anchored like links (text + offset)
+  // and stored per file; unsaved tabs keep theirs in memory until saved.
+  // formalize.js turns them into one formula per line and checks validity.
+
+  function loadVars() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(VARS_KEY) || '[]');
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveVars() {
+    try {
+      localStorage.setItem(VARS_KEY, JSON.stringify(varEntries.filter((e) => !e.source.startsWith('untitled:'))));
+    } catch {
+      // Read-only profiles keep variables for this session only.
+    }
+  }
+
+  function varSource(tab = activeTab()) {
+    return (tab && tab.path) || `untitled:${tab ? tab.id : 0}`;
+  }
+
+  // The stored offset if the phrase is still there, else its nearest copy.
+  function anchorVar(entry, text) {
+    if (text.startsWith(entry.text, entry.start)) {
+      return entry.start;
+    }
+    let best = -1;
+    for (let i = text.indexOf(entry.text); i !== -1; i = text.indexOf(entry.text, i + 1)) {
+      if (best === -1 || Math.abs(i - entry.start) < Math.abs(best - entry.start)) {
+        best = i;
+      }
+    }
+    return best;
+  }
+
+  function computeVarSpans(text) {
+    const source = varSource();
+    const spans = [];
+    let moved = false;
+    for (const entry of varEntries) {
+      if (entry.source !== source) {
+        continue;
+      }
+      const start = anchorVar(entry, text);
+      if (start === -1 || spans.some((s) => s.start === start)) {
+        continue;
+      }
+      if (start !== entry.start) {
+        entry.start = start;
+        moved = true;
+      }
+      spans.push({ id: entry.id, start, end: start + entry.text.length, name: entry.name, negated: entry.negated });
+    }
+    if (moved) {
+      saveVars();
+    }
+    return spans.sort((a, b) => a.start - b.start);
+  }
+
+  function varColor(name) {
+    const names = [...new Set(currentVarSpans.map((s) => s.name))];
+    return Math.max(0, names.indexOf(name)) % VAR_COLORS;
+  }
+
+  function paintVarHighlights() {
+    currentVarRanges = [];
+    if (!findHighlightSupported()) {
+      return;
+    }
+    for (let i = 0; i < VAR_COLORS; i += 1) {
+      CSS.highlights.delete(`logicg8-var-${i}`);
+      CSS.highlights.delete(`logicg8-var-${i}-neg`);
+    }
+    if (!currentVarSpans.length) {
+      return;
+    }
+    const matches = currentVarSpans.map((span) => ({ start: span.start, end: span.end, span }));
+    buildEditorRanges(matches);
+    const groups = new Map();
+    for (const match of matches) {
+      if (!match.range) {
+        continue;
+      }
+      currentVarRanges.push(match);
+      const color = `${varColor(match.span.name)}${match.span.negated ? '-neg' : ''}`;
+      if (!groups.has(color)) {
+        groups.set(color, new Highlight());
+      }
+      groups.get(color).add(match.range);
+    }
+    for (const [color, highlight] of groups) {
+      CSS.highlights.set(`logicg8-var-${color}`, highlight);
+    }
+  }
+
+  function varSpanAtPoint(x, y) {
+    for (const match of currentVarRanges) {
+      for (const rect of match.range.getClientRects()) {
+        if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+          return match.span;
+        }
+      }
+    }
+    return null;
+  }
+
+  function showVarTooltip(span, clientX, clientY) {
+    const phrase = editor.value.slice(span.start, span.end).trim();
+    showLinkTooltip({ target: '' }, clientX, clientY);
+    symbolTooltipGlyph.textContent = `${span.negated ? '¬' : ''}${span.name}`;
+    symbolTooltipTitle.textContent = span.negated ? `Negation of ${span.name}` : `Variable ${span.name}`;
+    symbolTooltipRead.textContent = `“${phrase}”`;
+    symbolTooltipDefinition.textContent = 'Right-click to change or remove';
+  }
+
+  function setFormalOpen(open) {
+    formalOpen = open;
+    app.classList.toggle('is-formal-open', open);
+    formalTrigger.setAttribute('aria-pressed', String(open));
+    queueLayoutMetrics();
+    if (open) {
+      renderFormalPanel();
+    }
+  }
+
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) {
+      node.className = className;
+    }
+    if (text !== undefined) {
+      node.textContent = text;
+    }
+    return node;
+  }
+
+  function varChip(name, negated) {
+    const chip = el('span', `var-chip var-color-${varColor(name)}`, `${negated ? '¬' : ''}${name}`);
+    return chip;
+  }
+
+  function formalLineLabel(line, index, lines) {
+    if (line.label) {
+      return line.label;
+    }
+    return line.conclusion ? 'C' : `P${lines.slice(0, index + 1).filter((l) => !l.conclusion).length}`;
+  }
+
+  function renderArgument(container, lines, conclusionLine) {
+    const list = el('div', 'formal-lines');
+    lines.forEach((line, index) => {
+      const isConclusion = line === conclusionLine || line.conclusion;
+      const row = el('div', `formal-line${isConclusion ? ' is-conclusion' : ''}`);
+      row.title = line.text;
+      row.append(el('span', 'formal-label', formalLineLabel(line, index, lines)));
+      row.append(el('code', 'formal-formula', `${isConclusion ? '∴ ' : ''}${line.symbolic}`));
+      if (line.tautology) {
+        row.append(el('span', 'formal-badge', 'always true'));
+      }
+      list.append(row);
+    });
+    container.append(list);
+  }
+
+  function renderVerdict(container, result) {
+    if (!result) {
+      return;
+    }
+    if (result.tooMany) {
+      container.append(el('p', 'formal-note', `Too many variables (${result.vars.length}) to check by truth table.`));
+      return;
+    }
+    const verdict = el('div', `formal-verdict ${result.valid ? 'is-valid' : 'is-invalid'}`);
+    verdict.append(el('strong', '', result.valid ? 'Valid' : 'Invalid'));
+    if (result.valid) {
+      verdict.append(el('span', '', result.inconsistent
+        ? 'only vacuously — the premises contradict each other, so nothing can make them all true.'
+        : 'whenever every premise is true, the conclusion is true.'));
+    } else {
+      const values = Object.entries(result.counterexample).map(([k, v]) => `${k} = ${v ? 'T' : 'F'}`).join(', ');
+      verdict.append(el('span', '', `Counterexample: ${values} makes every premise true and the conclusion false.`));
+    }
+    container.append(verdict);
+  }
+
+  function symbolicText(analysis) {
+    const out = [];
+    for (const v of analysis.variables) {
+      out.push(v.phrase ? `${v.name} = ${v.phrase}` : `¬${v.name} = ${v.negPhrase}`);
+    }
+    analysis.lines.forEach((line, index) => {
+      const isConclusion = line === analysis.conclusion || line.conclusion;
+      out.push(`${formalLineLabel(line, index, analysis.lines)}. ${isConclusion ? '∴ ' : ''}${line.symbolic}`);
+    });
+    return out.join('\n');
+  }
+
+  function renderFormalPanel() {
+    if (!formalOpen) {
+      return;
+    }
+    const body = document.createDocumentFragment();
+    if (!currentVarSpans.length) {
+      const empty = el('div', 'formal-empty');
+      empty.append(el('p', '', 'Select a phrase, right-click, and choose “Assign to variable…”.'));
+      empty.append(el('p', '', 'Assign “P” for a claim, or “¬P” for a phrase that denies it. Leave connective words '
+        + '(if, then, or, and, not) inside or around your selections — they become ⇒ ∨ ∧ ¬.'));
+      empty.append(el('p', '', 'Start lines with P1. P2. … and C. (or “Therefore”) to mark premises and conclusion.'));
+      formalBody.replaceChildren(empty);
+      return;
+    }
+
+    const analysis = window.Formalize.analyze(editor.value, currentVarSpans);
+
+    const vars = el('div', 'formal-section');
+    vars.append(el('h3', '', 'Variables'));
+    for (const v of analysis.variables) {
+      const row = el('div', 'formal-var');
+      row.append(varChip(v.name, !v.phrase));
+      row.append(el('span', '', v.phrase || v.negPhrase));
+      vars.append(row);
+    }
+    body.append(vars);
+
+    const argument = el('div', 'formal-section');
+    argument.append(el('h3', '', 'Argument'));
+    renderArgument(argument, analysis.lines, analysis.conclusion);
+    if (analysis.implicitConclusion) {
+      argument.append(el('p', 'formal-note', 'No line is marked as the conclusion (C. or “Therefore”), so the last one is used.'));
+    }
+    if (!analysis.conclusion) {
+      argument.append(el('p', 'formal-note', 'Assign phrases on at least two lines — premises and a conclusion — to check validity.'));
+    }
+    renderVerdict(argument, analysis.result);
+    body.append(argument);
+
+    if (analysis.warnings.length) {
+      const warn = el('div', 'formal-section');
+      warn.append(el('h3', '', 'Check the wording'));
+      for (const w of analysis.warnings) {
+        warn.append(el('p', `formal-warning is-${w.kind}`, w.message));
+      }
+      body.append(warn);
+    }
+
+    if (analysis.strict) {
+      const strict = el('div', 'formal-section');
+      strict.append(el('h3', '', 'Without assuming the dichotomy'));
+      for (const f of analysis.strict.fresh) {
+        const row = el('div', 'formal-var');
+        row.append(el('span', 'var-chip var-chip-fresh', f.name));
+        row.append(el('span', '', f.phrase));
+        strict.append(row);
+      }
+      renderArgument(strict, analysis.strict.lines, analysis.strict.lines[analysis.lines.indexOf(analysis.conclusion)]);
+      renderVerdict(strict, analysis.strict.result);
+      analysis.lines.forEach((line, i) => {
+        if (line.tautology && !analysis.strict.lines[i].tautology) {
+          strict.append(el('p', 'formal-note', `${formalLineLabel(line, i, analysis.lines)} looked true by logic alone `
+            + `(${line.symbolic}), but read strictly it is ${analysis.strict.lines[i].symbolic}: a real claim that `
+            + 'these are the only options, which needs its own support.'));
+        }
+      });
+      body.append(strict);
+    }
+
+    const actions = el('div', 'formal-actions');
+    const insert = el('button', 'text-button', 'Insert symbolic form');
+    insert.type = 'button';
+    insert.addEventListener('click', () => {
+      const end = editor.value.length;
+      replaceRange(end, end, `${editor.value.endsWith('\n') ? '' : '\n'}\n${symbolicText(analysis)}\n`);
+    });
+    const clear = el('button', 'text-button', 'Clear variables');
+    clear.type = 'button';
+    clear.addEventListener('click', () => {
+      const source = varSource();
+      varEntries = varEntries.filter((e) => e.source !== source);
+      saveVars();
+      renderHighlights();
+    });
+    actions.append(insert, clear);
+    body.append(actions);
+
+    formalBody.replaceChildren(body);
+  }
+
+  function parseVarInput(value) {
+    const match = /^\s*(?:(¬|!|~|-|not\s+)\s*)?([A-Za-z][A-Za-z0-9]*)\s*$/i.exec(value);
+    if (!match || /^not$/i.test(match[2])) {
+      return null;
+    }
+    return { name: match[2], negated: Boolean(match[1]) };
+  }
+
+  function nextFreeVarName() {
+    const used = new Set(currentVarSpans.map((s) => s.name));
+    return 'PQRSTUVWXYZABCDEFGHJKLMNO'.split('').find((n) => !used.has(n)) || '';
+  }
+
+  function openAssignPopover(x, y) {
+    const raw = editor.value.slice(editor.selectionStart, editor.selectionEnd);
+    const lead = raw.length - raw.trimStart().length;
+    const text = raw.trim();
+    if (!text || text.includes('\n')) {
+      showToast('Select a phrase on one line to assign it to a variable.', 2200);
+      return;
+    }
+    pendingAssign = { start: editor.selectionStart + lead, text, source: varSource() };
+    assignPhrase.textContent = `“${text}”`;
+    assignInput.value = nextFreeVarName();
+
+    const chips = document.createDocumentFragment();
+    for (const name of [...new Set(currentVarSpans.map((s) => s.name))]) {
+      for (const negated of [false, true]) {
+        const chip = el('button', `var-chip var-color-${varColor(name)}`, `${negated ? '¬' : ''}${name}`);
+        chip.type = 'button';
+        chip.title = negated ? `Assign as the negation of ${name}` : `Assign as ${name}`;
+        chip.addEventListener('click', () => assignVar(name, negated));
+        chips.append(chip);
+      }
+    }
+    assignChips.replaceChildren(chips);
+
+    assignPopover.hidden = false;
+    assignPopover.style.left = '0px';
+    assignPopover.style.top = '0px';
+    const rect = assignPopover.getBoundingClientRect();
+    assignPopover.style.left = `${Math.max(6, Math.min(x, window.innerWidth - rect.width - 6))}px`;
+    assignPopover.style.top = `${Math.max(6, Math.min(y, window.innerHeight - rect.height - 6))}px`;
+    assignInput.focus();
+    assignInput.select();
+  }
+
+  function closeAssignPopover() {
+    if (!assignPopover.hidden) {
+      assignPopover.hidden = true;
+      pendingAssign = null;
+      editor.focus();
+    }
+  }
+
+  function assignVar(name, negated) {
+    const pending = pendingAssign;
+    closeAssignPopover();
+    if (!pending) {
+      return;
+    }
+    const end = pending.start + pending.text.length;
+    varEntries = varEntries.filter((e) => {
+      if (e.source !== pending.source) {
+        return true;
+      }
+      const start = anchorVar(e, editor.value);
+      return start === -1 || start + e.text.length <= pending.start || start >= end;
+    });
+    varEntries.push({
+      id: `var-${Date.now()}-${varEntries.length}`,
+      source: pending.source,
+      text: pending.text,
+      start: pending.start,
+      name,
+      negated
+    });
+    saveVars();
+    if (!formalOpen) {
+      setFormalOpen(true);
+    }
+    renderHighlights();
+  }
+
+  function removeVar(id) {
+    varEntries = varEntries.filter((e) => e.id !== id);
+    saveVars();
+    renderHighlights();
+  }
+
+  // Saving an untitled tab moves its variables to the file; Save As copies them.
+  function moveVarsToPath(oldSource, newPath, copy) {
+    if (oldSource === newPath) {
+      return;
+    }
+    const mine = varEntries.filter((e) => e.source === oldSource);
+    if (!copy) {
+      varEntries = varEntries.filter((e) => e.source !== oldSource);
+    }
+    varEntries = varEntries.filter((e) => e.source !== newPath);
+    varEntries.push(...mine.map((e, i) => ({ ...e, id: `${e.id}-${i}-${Date.now()}`, source: newPath })));
+    saveVars();
   }
 
   function stepFontSize(delta) {
@@ -3640,7 +4061,7 @@
     contextMenuState = null;
   }
 
-  function showContextMenu(x, y, link, spell) {
+  function showContextMenu(x, y, link, spell, varSpan) {
     const spellSection = contextMenu.querySelector('.context-menu-spell');
     const suggestionsEl = contextMenu.querySelector('#contextMenuSuggestions');
     const linkItem = contextMenu.querySelector('[data-action="link"]');
@@ -3674,7 +4095,12 @@
       removeItem.hidden = !link;
     }
 
-    contextMenuState = { link, spell: spell || null };
+    const canAssign = !spell && editor.selectionEnd > editor.selectionStart;
+    const varItems = contextMenu.querySelectorAll('[data-var-item]');
+    varItems[0].hidden = !(canAssign || varSpan);
+    varItems[1].hidden = !canAssign;
+    varItems[2].hidden = !varSpan || Boolean(spell);
+    contextMenuState = { link, spell: spell || null, varSpan: varSpan || null, x, y };
     contextMenu.hidden = false;
     contextMenu.style.left = '0px';
     contextMenu.style.top = '0px';
@@ -3704,7 +4130,7 @@
     }
     const linkElement = linkElementAtPoint(event.clientX, event.clientY);
     const link = linkElement ? findLinkById(linkElement.dataset.linkId) : null;
-    showContextMenu(event.clientX, event.clientY, link, null);
+    showContextMenu(event.clientX, event.clientY, link, null, varSpanAtPoint(event.clientX, event.clientY));
   });
 
   contextMenu.addEventListener('click', (event) => {
@@ -3722,6 +4148,10 @@
       createLinkAtSelection();
     } else if (action === 'remove' && state && state.link) {
       removeLink(state.link.id);
+    } else if (action === 'assign-var' && state) {
+      openAssignPopover(state.x, state.y);
+    } else if (action === 'remove-var' && state && state.varSpan) {
+      removeVar(state.varSpan.id);
     }
   });
 
@@ -3729,10 +4159,29 @@
     if (!event.target.closest('#contextMenu')) {
       hideContextMenu();
     }
+    if (!event.target.closest('#assignPopover')) {
+      closeAssignPopover();
+    }
   }, true);
+
+  assignInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      const parsed = parseVarInput(assignInput.value);
+      if (parsed) {
+        assignVar(parsed.name, parsed.negated);
+      } else {
+        showToast('Use a letter or name like P, Q2 — or ¬P for a negation.', 2400);
+      }
+    }
+  });
+
+  formalTrigger.addEventListener('click', () => setFormalOpen(!formalOpen));
+  formalClose.addEventListener('click', () => setFormalOpen(false));
 
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
+      closeAssignPopover();
       hideContextMenu();
       hideDropOverlay();
     }

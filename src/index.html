@@ -50,6 +50,7 @@
           </span>
           <span class="button-label" id="markdownModeLabel">Markdown</span>
         </button>
+        <button class="text-button" id="formalTrigger" type="button" aria-pressed="false" title="Show the argument's logical form and check its validity">Formalize</button>
         <div class="font-size-stepper" role="group" aria-label="Font size">
           <button class="text-button size-button" id="fontSizeDown" type="button" title="Decrease font size (Ctrl+-)" aria-label="Decrease font size">A−</button>
           <button class="text-button size-button" id="fontSizeUp" type="button" title="Increase font size (Ctrl+=)" aria-label="Increase font size">A+</button>
@@ -148,6 +149,16 @@
           </div>
         </div>
       </div>
+
+      <aside class="formal-panel" id="formalPanel" aria-label="Formalize">
+        <div class="formal-head">
+          <h2>Formalize</h2>
+          <button class="find-button" id="formalClose" type="button" title="Close" aria-label="Close formalize panel">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12"/><path d="m18 6-12 12"/></svg>
+          </button>
+        </div>
+        <div class="formal-body" id="formalBody"></div>
+      </aside>
 
       <div class="find-bar" id="findBar" role="search" aria-label="Find in file" hidden>
         <div class="find-field">
@@ -268,6 +279,16 @@
     </div>
     <button type="button" role="menuitem" data-action="link">Link selection to file…</button>
     <button type="button" role="menuitem" data-action="remove">Remove link</button>
+    <div class="context-menu-separator" role="separator" data-var-item></div>
+    <button type="button" role="menuitem" data-action="assign-var" data-var-item>Assign to variable…</button>
+    <button type="button" role="menuitem" data-action="remove-var" data-var-item>Remove variable</button>
+  </div>
+
+  <div class="assign-popover" id="assignPopover" role="dialog" aria-label="Assign to variable" hidden>
+    <p class="assign-phrase" id="assignPhrase"></p>
+    <input id="assignInput" type="text" placeholder="P   (or ¬P for its negation)" aria-label="Variable name" autocomplete="off" spellcheck="false">
+    <div class="assign-chips" id="assignChips"></div>
+    <p class="assign-hint"><kbd>Enter</kbd> assigns · <code>¬P</code>, <code>!P</code> or <code>~P</code> means “not P”</p>
   </div>
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
@@ -289,6 +310,7 @@
   <script src="spellcheck.js"></script>
   <script src="markdown.js"></script>
   <script src="draw.js"></script>
+  <script src="formalize.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

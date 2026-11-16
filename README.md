@@ -23,6 +23,10 @@ diagram, and link notes together. LogicG8 is a desktop app built with Electron.
   words with a red squiggle; right-click a word for suggestions or to add it
   to your own dictionary.
 - **Font controls** — family, weight, size, line height and letter spacing.
+- **Formalize** — highlight phrases of a natural-language argument, assign
+  them to variables (P, ¬P, …), and see its symbolic form, whether it's
+  valid, and where the wording doesn't support the symbols (false
+  dichotomies, equivocation).
 
 ## Installation
 
@@ -116,6 +120,23 @@ Click **Draw mode** in the toolbar. Use the pencil, line and text tools
 - **Shift + ArrowDown** — step to subscript; type normally to write subscripts.
 - **Shift + ArrowUp** — step to superscript.
 - Step back to the normal baseline with the opposite arrow.
+
+### Formalizing an argument
+
+1. Write the argument with labelled lines: `P1.`, `P2.`, … for premises and
+   `C.` (or a line starting with "Therefore") for the conclusion.
+2. Select a phrase, right-click → **Assign to variable…**, and type a name
+   (`P`) — or `¬P` (`!P`, `~P`) if the phrase denies P. Existing variables
+   appear as one-click chips.
+3. Include or leave the connective words around your selections — *if,
+   then, only if, or, and, unless, not* (or the symbols) become ⇒ ∨ ∧ ¬.
+
+The **Formalize** panel shows each line as a formula, a valid/invalid
+verdict with a counterexample, and wording checks. If a phrase assigned to
+¬P doesn't actually negate P ("from another" vs "from itself"), it's flagged
+as an assumed dichotomy and the argument is re-checked with that phrase as
+its own variable. **Insert symbolic form** appends the formal version to the
+file. Variables are stored per file on this machine, like links.
 
 ### Spell checking
 
