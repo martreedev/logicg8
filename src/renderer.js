@@ -1037,8 +1037,8 @@
     placeCaret();
   }
 
-  function caretClientRect() {
-    const target = editor.selectionStart;
+  function caretClientRect(position = editor.selectionStart) {
+    const target = position;
     let remaining = target;
     let found = null;
 
@@ -3557,7 +3557,7 @@
     const body = document.createDocumentFragment();
     if (!currentVarSpans.length) {
       const empty = el('div', 'formal-empty');
-      empty.append(el('p', '', 'Select a phrase, right-click, and choose “Assign to variable…”.'));
+      empty.append(el('p', '', 'Select a phrase and press Ctrl+B, or right-click and choose “Assign to variable…”.'));
       empty.append(el('p', '', 'Assign “P” for a claim, or “¬P” for a phrase that denies it. Leave connective words '
         + '(if, then, or, and, not) inside or around your selections — they become ⇒ ∨ ∧ ¬.'));
       empty.append(el('p', '', 'Start lines with P1. P2. … and C. (or “Therefore”) to mark premises and conclusion.'));
@@ -3870,6 +3870,17 @@
   editor.addEventListener('keydown', (event) => {
     hideSymbolTooltip();
     if (capturingShortcut) {
+      return;
+    }
+
+    const modifier = event.ctrlKey || event.metaKey;
+    if (modifier && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'b') {
+      event.preventDefault();
+      const rect = caretClientRect(editor.selectionEnd);
+      openAssignPopover(
+        rect ? rect.left : window.innerWidth / 2,
+        rect ? rect.bottom + 6 : window.innerHeight / 2
+      );
       return;
     }
 

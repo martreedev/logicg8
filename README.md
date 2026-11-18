@@ -125,9 +125,9 @@ Click **Draw mode** in the toolbar. Use the pencil, line and text tools
 
 1. Write the argument with labelled lines: `P1.`, `P2.`, … for premises and
    `C.` (or a line starting with "Therefore") for the conclusion.
-2. Select a phrase, right-click → **Assign to variable…**, and type a name
-   (`P`) — or `¬P` (`!P`, `~P`) if the phrase denies P. Existing variables
-   appear as one-click chips.
+2. Select a phrase, press **Ctrl + B** (or right-click → **Assign to variable…**),
+   and type a name (`P`) — or `¬P` (`!P`, `~P`) if the phrase denies P. Existing
+   variables appear as one-click chips.
 3. Include or leave the connective words around your selections — *if,
    then, only if, or, and, unless, not* (or the symbols) become ⇒ ∨ ∧ ¬.
 
@@ -163,6 +163,7 @@ logic keywords (such as `forall` or `implies`) are treated as correct.
 | `Ctrl + F`        | Find                                            |
 | `F3` / `Shift + F3` | Next / previous match                         |
 | `Ctrl + Shift + M`| Toggle Markdown preview / raw text              |
+| `Ctrl + B`        | Assign the selected phrase to a variable        |
 | `Ctrl + =` / `Ctrl + -` | Increase / decrease font size             |
 | `Ctrl + scroll`   | Increase / decrease font size                   |
 | `Tab`             | Autocomplete the keyword under the cursor       |
