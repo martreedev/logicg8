@@ -1,6 +1,11 @@
 (() => {
   'use strict';
 
+  // The main process passes its package version in the page query so the
+  // brand and the window title can show it without another IPC round trip.
+  const APP_VERSION = new URLSearchParams(window.location.search).get('version') || '';
+  const APP_VERSION_LABEL = APP_VERSION ? `v${APP_VERSION}` : '';
+
   const LOGIC_GROUPS = [
     {
       title: 'Connectives',
@@ -254,6 +259,7 @@
   const letterSpacingValue = document.getElementById('letterSpacingValue');
   const resetFont = document.getElementById('resetFont');
   const fileStatus = document.getElementById('fileStatus');
+  const appVersion = document.getElementById('appVersion');
   const dirtyDot = document.getElementById('dirtyDot');
   const charCount = document.getElementById('charCount');
   const wordCount = document.getElementById('wordCount');
@@ -1167,7 +1173,7 @@
   function updateTitle() {
     const tab = activeTab();
     const name = tabDisplayName(tab);
-    document.title = `${dirty ? '• ' : ''}${name} — LogicG8`;
+    document.title = `${dirty ? '• ' : ''}${name} — LogicG8${APP_VERSION_LABEL ? ` ${APP_VERSION_LABEL}` : ''}`;
     fileStatus.textContent = name;
     fileStatus.title = currentFilePath || name;
     dirtyDot.hidden = !dirty;
@@ -3766,6 +3772,9 @@
   }
 
   function initialize() {
+    if (appVersion) {
+      appVersion.textContent = APP_VERSION_LABEL;
+    }
     populateFontSelect();
     buildSymbolStrip();
     applySettings();

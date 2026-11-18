@@ -3,6 +3,10 @@ const { autoUpdater } = require('electron-updater');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
+// app.getVersion() reports Electron's own version when running from source
+// (and the app version when packaged), so read the real one from package.json.
+const { version: APP_VERSION } = require(path.join(__dirname, '..', 'package.json'));
+
 let mainWindow;
 let splashWindow;
 let splashReady = Promise.resolve();
@@ -141,7 +145,7 @@ function createSplashWindow() {
 
   splashWindow.setMenuBarVisibility(false);
   splashWindow.loadFile(path.join(__dirname, 'splash.html'), {
-    query: { version: app.getVersion() }
+    query: { version: APP_VERSION }
   });
 
   splashReady = new Promise((resolve) => {
@@ -299,7 +303,9 @@ function createWindow() {
     }
   });
 
-  mainWindow.loadFile(path.join(__dirname, 'index.html'));
+  mainWindow.loadFile(path.join(__dirname, 'index.html'), {
+    query: { version: APP_VERSION }
+  });
 
   // A file dropped outside the renderer's handlers would otherwise navigate the
   // window to file:// and replace the editor. The app never navigates.
