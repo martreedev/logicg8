@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'">
+  <title>LogicG8</title>
+  <link rel="stylesheet" href="splash.css">
+</head>
+<body>
+  <main class="splash">
+    <div class="brand">
+      <span class="brand-logo" aria-hidden="true"><span class="brand-logo-symbol">∧</span></span>
+      <span class="brand-name">LogicG8</span>
+    </div>
+
+    <div class="spinner" aria-hidden="true"></div>
+
+    <p class="status" id="status" role="status">Checking for updates…</p>
+
+    <div class="progress" id="progress" role="progressbar" aria-label="Update download" hidden>
+      <span class="progress-bar" id="progressBar"></span>
+    </div>
+
+    <p class="version" id="version"></p>
+  </main>
+  <script src="splash.js"></script>
+</body>
+</html>

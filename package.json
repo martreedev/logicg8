@@ -1,6 +1,6 @@
 {
   "name": "LogicG8",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "description": "A dark, fast notepad for symbolic logic.",
   "author": "LogicG8",
@@ -11,7 +11,8 @@
     "smoke:draw": "electron scripts/draw-check.js",
     "check:formalize": "node scripts/formalize-check.js",
     "pack": "electron-builder --win --dir",
-    "dist": "electron-builder --win"
+    "dist": "electron-builder --win",
+    "dist:publish": "electron-builder --win --publish always"
   },
   "devDependencies": {
     "electron": "^45.3.0",
@@ -23,6 +24,12 @@
     "directories": {
       "output": "dist",
       "buildResources": "build"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "martreedev",
+      "repo": "logicg8",
+      "releaseType": "release"
     },
     "files": [
       "src/**/*",
@@ -51,5 +58,8 @@
         "description": "Logic File"
       }
     ]
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
   }
 }

@@ -209,6 +209,25 @@ The installer is produced by [electron-builder](https://www.electron.build).
 The file association lives in the `fileAssociations` block of `package.json`,
 and the "New → Logic File" entry is added by `scripts/installer.nsh`.
 
+### Releasing an update
+
+Packaged builds check GitHub Releases on launch, before the main window opens.
+To publish a new version:
+
+1. Bump `version` in `package.json` (for example to `1.2.0`).
+2. Commit the change and create a matching tag (`git tag v1.2.0`).
+3. Publish with a GitHub token that can write to this repository:
+
+```sh
+set GH_TOKEN=your-token
+npm run dist:publish
+```
+
+electron-builder uploads the installer, `latest.yml`, and the blockmap to the
+GitHub release for that version. Installed copies find the release on their
+next launch, download it, and restart into the new version. A build can only
+update to a strictly higher version, so the bump is required every time.
+
 ## Project structure
 
 ```

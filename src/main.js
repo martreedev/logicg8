@@ -1,9 +1,29 @@
 const { app, BrowserWindow, ipcMain, dialog, nativeTheme, shell } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
 let mainWindow;
+let splashWindow;
+let splashReady = Promise.resolve();
+let splashShownAt = 0;
+let mainWindowReady = false;
 const pendingOpenPaths = [];
+
+// How long the update check may take before the app opens anyway, so a slow
+// or offline network never keeps the user waiting.
+const UPDATE_CHECK_TIMEOUT = 6000;
+// An update download that stalls for this long gives up and opens the app.
+const UPDATE_DOWNLOAD_TIMEOUT = 10 * 60 * 1000;
+// The splash is only used for real launches; the env var is a development
+// escape hatch for looking at it without packaging the app.
+const SHOW_SPLASH = app.isPackaged || process.env.LOGICG8_SHOW_SPLASH === '1';
+
+// Closing the window is a two-step dance with the renderer: the first close
+// request is cancelled so the renderer can ask about unsaved tabs, and the
+// renderer calls back to either finish or abandon the quit.
+let closeApproved = false;
+let closeRequestPending = false;
 
 const TEXT_EXTENSIONS = new Set(['txt', 'md', 'markdown', 'mdown', 'mkd', 'logic', 'syllogism']);
 const IMAGE_EXTENSIONS = new Set(['png']);
@@ -73,7 +93,194 @@ function imageBuffer(dataUrl) {
   return Buffer.from(match[1], 'base64');
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function withTimeout(promise, ms) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Timed out')), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
+
+// The splash sits in front of the main window while updates are checked. It is
+// frameless, so it reads as part of the launch rather than another window.
+function createSplashWindow() {
+  splashWindow = new BrowserWindow({
+    width: 380,
+    height: 208,
+    frame: false,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    backgroundColor: '#050505',
+    show: false,
+    center: true,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    title: 'LogicG8',
+    icon: path.join(__dirname, '..', 'assets', 'icon.ico'),
+    webPreferences: {
+      preload: path.join(__dirname, 'splash-preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  });
+
+  splashWindow.setMenuBarVisibility(false);
+  splashWindow.loadFile(path.join(__dirname, 'splash.html'), {
+    query: { version: app.getVersion() }
+  });
+
+  splashReady = new Promise((resolve) => {
+    splashWindow.once('ready-to-show', () => {
+      splashShownAt = Date.now();
+      if (splashWindow && !splashWindow.isDestroyed()) {
+        splashWindow.show();
+      }
+      resolve();
+    });
+  });
+
+  splashWindow.on('closed', () => {
+    splashWindow = null;
+  });
+}
+
+function setSplashStatus(text) {
+  if (splashWindow && !splashWindow.isDestroyed()) {
+    splashWindow.webContents.send('splash:status', text);
+  }
+}
+
+function setSplashProgress(percent) {
+  if (splashWindow && !splashWindow.isDestroyed()) {
+    splashWindow.webContents.send('splash:progress', percent);
+  }
+}
+
+// Shows the main window once the splash has had its moment. The splash is
+// destroyed first thing if the app is about to restart for an update.
+async function revealApp() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  if (!mainWindowReady) {
+    await withTimeout(
+      new Promise((resolve) => mainWindow.once('ready-to-show', resolve)),
+      5000
+    ).catch(() => {});
+  }
+
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  if (splashShownAt) {
+    const remaining = Math.max(0, 700 - (Date.now() - splashShownAt));
+    if (remaining > 0) {
+      await delay(remaining);
+    }
+  }
+
+  mainWindow.show();
+  mainWindow.focus();
+
+  if (splashWindow && !splashWindow.isDestroyed()) {
+    splashWindow.destroy();
+    splashWindow = null;
+  }
+}
+
+// Checks GitHub for a newer release and, if there is one, downloads and
+// installs it. Returns true when the app is quitting to restart as the new
+// version. Every failure falls back to opening the current version.
+async function installUpdateIfAvailable() {
+  if (!app.isPackaged) {
+    return false;
+  }
+
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.allowPrerelease = false;
+
+  let available = false;
+  const onAvailable = (info) => {
+    available = true;
+    setSplashStatus(`Update ${info.version} found`);
+  };
+  const onProgress = (progress) => {
+    setSplashProgress(progress.percent);
+  };
+
+  autoUpdater.on('update-available', onAvailable);
+  autoUpdater.on('download-progress', onProgress);
+
+  try {
+    await withTimeout(autoUpdater.checkForUpdates(), UPDATE_CHECK_TIMEOUT);
+  } catch {
+    autoUpdater.removeListener('update-available', onAvailable);
+    autoUpdater.removeListener('download-progress', onProgress);
+    return false;
+  }
+
+  if (!available) {
+    autoUpdater.removeListener('update-available', onAvailable);
+    autoUpdater.removeListener('download-progress', onProgress);
+    return false;
+  }
+
+  setSplashStatus('Downloading update…');
+
+  try {
+    await withTimeout(autoUpdater.downloadUpdate(), UPDATE_DOWNLOAD_TIMEOUT);
+  } catch {
+    autoUpdater.removeListener('update-available', onAvailable);
+    autoUpdater.removeListener('download-progress', onProgress);
+    setSplashProgress(0);
+    setSplashStatus('Could not install the update');
+    await delay(1500);
+    return false;
+  }
+
+  autoUpdater.removeListener('update-available', onAvailable);
+  autoUpdater.removeListener('download-progress', onProgress);
+
+  setSplashStatus('Restarting to finish the update…');
+  await delay(700);
+
+  // The installer closes the window on its own, so the unsaved-changes prompt
+  // must not get in its way.
+  closeApproved = true;
+  closeRequestPending = false;
+
+  try {
+    autoUpdater.quitAndInstall(true, true);
+  } catch {
+    closeApproved = false;
+    setSplashProgress(0);
+    setSplashStatus('Could not install the update');
+    return false;
+  }
+
+  return true;
+}
+
 function createWindow() {
+  mainWindowReady = false;
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 780,
@@ -100,11 +307,67 @@ function createWindow() {
     event.preventDefault();
   });
 
-  mainWindow.once('ready-to-show', () => mainWindow.show());
+  mainWindow.once('ready-to-show', () => {
+    mainWindowReady = true;
+  });
+  mainWindow.on('close', (event) => {
+    if (closeApproved) {
+      return;
+    }
+    event.preventDefault();
+    if (closeRequestPending || mainWindow.webContents.isDestroyed()) {
+      return;
+    }
+    closeRequestPending = true;
+    mainWindow.webContents.send('app:close-requested');
+  });
   mainWindow.on('closed', () => {
     mainWindow = null;
+    closeApproved = false;
+    closeRequestPending = false;
   });
 }
+
+// The renderer says the app may close (nothing unsaved, changes discarded, or
+// everything saved).
+ipcMain.handle('app:close', () => {
+  closeApproved = true;
+  closeRequestPending = false;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.close();
+  }
+});
+
+// The renderer is keeping the window open (the user cancelled, or a save did
+// not happen).
+ipcMain.handle('app:close-cancel', () => {
+  closeRequestPending = false;
+});
+
+ipcMain.handle('app:ask-save-before-close', async (_event, payload) => {
+  const count = payload && Number.isInteger(payload.count) ? payload.count : 1;
+  const names = payload && Array.isArray(payload.names)
+    ? payload.names.filter((name) => typeof name === 'string' && name)
+    : [];
+  const listed = names.slice(0, 10).join('\n');
+  const more = names.length > 10 ? `\n…and ${names.length - 10} more` : '';
+
+  const result = await dialog.showMessageBox(mainWindow, {
+    type: 'warning',
+    buttons: ['Save', "Don't Save", 'Cancel'],
+    defaultId: 0,
+    cancelId: 2,
+    noLink: true,
+    message: count === 1
+      ? 'Do you want to save the changes you made?'
+      : `Do you want to save the changes to ${count} open files?`,
+    detail: listed
+      ? `${listed}${more}\n\nYour changes will be lost if you don't save them.`
+      : "Your changes will be lost if you don't save them."
+  });
+
+  return result.response;
+});
 
 ipcMain.handle('file:open', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -300,14 +563,38 @@ app.on('open-file', (event, filePath) => {
   mainWindow.webContents.send('file:open-path', filePath);
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   nativeTheme.themeSource = 'dark';
   collectStartupPaths(process.argv);
+
   createWindow();
+
+  if (SHOW_SPLASH) {
+    createSplashWindow();
+    // A broken splash must never keep the app from opening.
+    await withTimeout(splashReady, 3000).catch(() => {});
+  }
+
+  const restartingForUpdate = SHOW_SPLASH
+    ? await installUpdateIfAvailable()
+    : false;
+
+  if (restartingForUpdate) {
+    // If the installer could not take over, do not leave the user staring at
+    // the splash forever.
+    setTimeout(() => {
+      closeApproved = false;
+      revealApp();
+    }, 20000);
+    return;
+  }
+
+  await revealApp();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
+      revealApp();
     }
   });
 });

@@ -28,5 +28,14 @@ contextBridge.exposeInMainWorld('mardraw', {
       return;
     }
     ipcRenderer.on('file:open-path', (_event, filePath) => callback(filePath));
-  }
+  },
+  onCloseRequested: (callback) => {
+    if (typeof callback !== 'function') {
+      return;
+    }
+    ipcRenderer.on('app:close-requested', () => callback());
+  },
+  closeApp: () => ipcRenderer.invoke('app:close'),
+  cancelAppClose: () => ipcRenderer.invoke('app:close-cancel'),
+  askSaveBeforeClose: (payload) => ipcRenderer.invoke('app:ask-save-before-close', payload)
 });

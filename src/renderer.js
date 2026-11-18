@@ -2919,6 +2919,81 @@
     closeTab(activeTabIndex);
   }
 
+  // Saves one tab by making it active, since the save routines work on the
+  // live editor/canvas. Returns false when the save was cancelled or failed.
+  async function saveTabForClose(tab) {
+    const index = tabs.indexOf(tab);
+    if (index === -1) {
+      return true;
+    }
+    if (index !== activeTabIndex) {
+      activateTab(index);
+    } else {
+      commitActiveTab();
+    }
+    if (!tabs[index].dirty) {
+      return true;
+    }
+    await saveFile();
+    commitActiveTab();
+    return !tabs[index].dirty;
+  }
+
+  let closeRequestInFlight = false;
+
+  // The main process cancelled the window close and asked us first. Offer to
+  // save, then either close the app or keep it open.
+  async function handleCloseRequest() {
+    if (closeRequestInFlight || !window.mardraw) {
+      return;
+    }
+    closeRequestInFlight = true;
+    try {
+      commitActiveTab();
+      const dirtyTabs = tabs.filter((tab) => tab.dirty);
+
+      if (dirtyTabs.length === 0) {
+        window.mardraw.closeApp();
+        return;
+      }
+
+      const response = await window.mardraw.askSaveBeforeClose({
+        count: dirtyTabs.length,
+        names: dirtyTabs.map((tab) => tabDisplayName(tab))
+      });
+
+      if (response === 2 || response === undefined || response === null) {
+        window.mardraw.cancelAppClose();
+        return;
+      }
+
+      if (response === 1) {
+        window.mardraw.closeApp();
+        return;
+      }
+
+      for (const tab of dirtyTabs) {
+        const saved = await saveTabForClose(tab);
+        if (!saved) {
+          window.mardraw.cancelAppClose();
+          return;
+        }
+      }
+
+      commitActiveTab();
+      if (tabs.some((tab) => tab.dirty)) {
+        window.mardraw.cancelAppClose();
+        return;
+      }
+
+      window.mardraw.closeApp();
+    } catch {
+      window.mardraw.cancelAppClose();
+    } finally {
+      closeRequestInFlight = false;
+    }
+  }
+
   async function readFilePath(path) {
     if (!window.mardraw) {
       return null;
@@ -4060,6 +4135,10 @@
     window.mardraw.onOpenPath(handleOpenPathFromMain);
   }
 
+  if (window.mardraw && typeof window.mardraw.onCloseRequested === 'function') {
+    window.mardraw.onCloseRequested(handleCloseRequest);
+  }
+
   document.addEventListener('dragenter', handleDragEnter);
   document.addEventListener('dragover', handleDragOver);
   document.addEventListener('dragleave', handleDragLeave);
@@ -4250,12 +4329,9 @@
   });
 
   window.addEventListener('beforeunload', (event) => {
+    // Keep the in-memory state consistent; the main process asks about
+    // unsaved tabs through app:close-requested before the window can close.
     commitActiveTab();
-    if (!tabs.some((tab) => tab.dirty)) {
-      return;
-    }
-    event.preventDefault();
-    event.returnValue = '';
   });
 
   initialize();
