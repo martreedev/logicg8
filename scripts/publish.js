@@ -63,7 +63,7 @@ if (existingRelease.status === 0) {
   abort(`Release ${tag} already exists. Bump the version in package.json before publishing again.`);
 }
 
-run(npm, ['run', 'dist']);
+run(npm, ['run', 'dist'], { shell: process.platform === 'win32' });
 
 const artifacts = [
   `dist/LogicG8-Setup-${version}.exe`,
