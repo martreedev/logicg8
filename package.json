@@ -12,7 +12,7 @@
     "check:formalize": "node scripts/formalize-check.js",
     "pack": "electron-builder --win --dir",
     "dist": "electron-builder --win",
-    "dist:publish": "electron-builder --win --publish always"
+    "dist:publish": "node scripts/publish.js"
   },
   "devDependencies": {
     "electron": "^45.3.0",
@@ -28,8 +28,7 @@
     "publish": {
       "provider": "github",
       "owner": "martreedev",
-      "repo": "logicg8",
-      "releaseType": "release"
+      "repo": "logicg8"
     },
     "files": [
       "src/**/*",
