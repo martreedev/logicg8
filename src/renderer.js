@@ -2895,34 +2895,76 @@
     focusActiveView();
   }
 
-  function closeTab(index) {
+  async function closeTab(index) {
     const tab = tabs[index];
     if (!tab) {
       return;
     }
-    if (tab.dirty && !window.confirm(`Discard unsaved changes in ${tabDisplayName(tab)}?`)) {
-      return;
-    }
-    if (index === activeTabIndex) {
+
+    const wasActive = index === activeTabIndex;
+    const previousActive = tabs[activeTabIndex];
+
+    if (wasActive) {
       commitActiveTab();
     }
-    tabs.splice(index, 1);
+
+    if (tab.dirty) {
+      if (!window.mardraw || typeof window.mardraw.askSaveBeforeClose !== 'function') {
+        if (!window.confirm(`Discard unsaved changes in ${tabDisplayName(tab)}?`)) {
+          return;
+        }
+      } else {
+        const response = await window.mardraw.askSaveBeforeClose({
+          count: 1,
+          names: [tabDisplayName(tab)]
+        });
+
+        // 0 = Save, 1 = Don't Save, 2 = Cancel (or no answer).
+        if (response !== 0 && response !== 1) {
+          return;
+        }
+
+        if (response === 0) {
+          const saved = await saveTabForClose(tab);
+          if (!saved) {
+            return;
+          }
+        }
+      }
+    }
+
+    const currentIndex = tabs.indexOf(tab);
+    if (currentIndex === -1) {
+      return;
+    }
+
+    if (currentIndex === activeTabIndex) {
+      commitActiveTab();
+    }
+
+    tabs.splice(currentIndex, 1);
     if (tabs.length === 0) {
       tabs.push(createTab(null, ''));
       activeTabIndex = 0;
+    } else if (!wasActive && previousActive && previousActive !== tab) {
+      // Saving a background tab activates it; return to where the user was.
+      const backIndex = tabs.indexOf(previousActive);
+      activeTabIndex = backIndex === -1
+        ? Math.min(currentIndex, tabs.length - 1)
+        : backIndex;
     } else {
-      activeTabIndex = Math.min(activeTabIndex, tabs.length - 1);
+      activeTabIndex = Math.min(currentIndex, tabs.length - 1);
     }
     loadActiveTab();
     focusActiveView();
   }
 
-  function closeTabOrWindow() {
+  async function closeTabOrWindow() {
     if (tabs.length <= 1) {
       window.close();
       return;
     }
-    closeTab(activeTabIndex);
+    await closeTab(activeTabIndex);
   }
 
   // Saves one tab by making it active, since the save routines work on the
